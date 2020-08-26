@@ -61,7 +61,7 @@ async def choose_deck(message: types.Message):
             raise FileNotFoundError
     except FileNotFoundError:
         await message.answer("You don't have a single deck. Please, create at least one")
-        return None
+        return
 
     titles = []
     for title in data:
