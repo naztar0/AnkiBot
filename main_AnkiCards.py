@@ -19,6 +19,7 @@ dp = Dispatcher(bot, storage=storage)
 class Start_learning(StatesGroup): deck = State()
 class Create_deck(StatesGroup): deck = State()
 class Delete_deck(StatesGroup): deck = State()
+class Export_deck(StatesGroup): deck = State()
 
 
 class Editing(StatesGroup):
@@ -28,14 +29,15 @@ class Editing(StatesGroup):
 
 status_random_weights = {1: 50, 2: 5, 3: 2, 4: 1}
 side_list = ('front', 'back')
-buttons = ["⭐ Start learning", "🆕 Create deck", "📝 Edit deck", "❌ Delete deck"]
+buttons = ("⭐ Start learning", "🆕 Create deck", "📝 Edit deck", "❌ Delete deck", "📤 Export deck")
 back_button = "⬅ Back"
 
 
 def keyboard():
     key = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    key.add(buttons[0], buttons[1])
-    key.add(buttons[2], buttons[3])
+    key.add(buttons[0])
+    key.add(buttons[1], buttons[2])
+    key.add(buttons[3], buttons[4])
     return key
 
 
@@ -87,6 +89,8 @@ async def message_handler(message: types.Message):
         await editing_mode(message)
     elif message.text == buttons[3]:
         await deleting_mode(message)
+    elif message.text == buttons[4]:
+        await export_mode(message)
     elif message.text == back_button:
         await message.answer("Canceled", reply_markup=keyboard())
 
@@ -166,6 +170,19 @@ async def deleting_mode(message):
         key.add(types.InlineKeyboardButton(t, callback_data=str(t)))
     await Delete_deck.deck.set()
     await message.answer("Deleting mode", reply_markup=back_keyboard())
+    await message.answer("Choose the deck", reply_markup=key)
+
+
+async def export_mode(message):
+    titles = await choose_deck(message)
+    if not titles:
+        return
+
+    key = types.InlineKeyboardMarkup()
+    for t in titles:
+        key.add(types.InlineKeyboardButton(t, callback_data=str(t)))
+    await Export_deck.deck.set()
+    await message.answer("Export for the [Anki app](https://apps.ankiweb.net/#download)", reply_markup=back_keyboard(), parse_mode='Markdown')
     await message.answer("Choose the deck", reply_markup=key)
 
 
@@ -307,22 +324,37 @@ async def answer_handler(message: types.Message, state: FSMContext):
 
     state_data = await state.get_data()
     text_sep = str(message.text).split('\n')
+    overwritten = []
 
     with open(f'json_words/{message.chat.id}.json', 'r', encoding='utf-8') as f:
         data = json.load(f)
     for t in text_sep:
+        over = False
         t = t.split(' - ')
-        try:
-            data[state_data['title']]['1'].append({'front': t[0], 'back': t[1]})
-        except IndexError:
+        if len(t) != 2:
             await message.reply("Wrong input, please try again")
             return
+        for num in data[state_data['title']]:
+            if over:
+                break
+            for i, w in enumerate(data[state_data['title']][num]):
+                if w['front'] == t[0]:
+                    over = True
+                    overwritten.append(t[0])
+                    data[state_data['title']][num][i] = {'front': t[0], 'back': t[1]}
+                    break
+        if not over:
+            data[state_data['title']]['1'].append({'front': t[0], 'back': t[1]})
+
+    over_str = ''
+    if overwritten:
+        over_str = "\n\nOverwritten:\n" + ', '.join(overwritten)
 
     with open(f'json_words/{message.chat.id}.json', 'wt', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
     await state.finish()
-    await message.answer("Successfully edited!", reply_markup=keyboard())
+    await message.answer("Successfully edited!" + over_str, reply_markup=keyboard())
 
 
 @dp.callback_query_handler(lambda callback_query: True, state=Editing.deck)
@@ -351,6 +383,28 @@ async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext
     await state.finish()
     await callback_query.answer()
     await callback_query.message.answer("Successfully deleted!")
+
+
+@dp.message_handler(content_types=['text'], state=Export_deck.deck)
+async def answer_handler(message: types.Message, state: FSMContext):
+    if await cancel(message, state):
+        return
+
+
+@dp.callback_query_handler(lambda callback_query: True, state=Export_deck.deck)
+async def callback_inline(callback_query: types.CallbackQuery, state: FSMContext):
+    with open(f'json_words/{callback_query.message.chat.id}.json', 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    deck = data[callback_query.data]
+    output = ''
+    for num in deck:
+        for word in deck[num]:
+            output += word['front'] + '\t' + word['back'] + '\n'
+    with open('temp.txt', 'w') as f:
+        f.write(output)
+    await state.finish()
+    await callback_query.answer()
+    await bot.send_document(callback_query.message.chat.id, types.InputFile('temp.txt', callback_query.data + '.txt'), reply_markup=keyboard())
 
 
 if __name__ == "__main__":

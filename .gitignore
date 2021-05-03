@@ -1,2 +1,6 @@
+venv
+.idea
 json_words
 constants.py
+test.py
+temp.txt
